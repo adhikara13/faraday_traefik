@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v3.1.6
+    restart: always
+    container_name: traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+    ports:
+      - "80:80"       # HTTP
+      - "443:443"     # HTTPS
+      - "8080:8080"   # Traefik dashboard
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik-certificates:/letsencrypt"
+    networks:
+      - faraday_network
+
+  db:
+    image: postgres:12.7-alpine
+    restart: always
+    container_name: faraday_db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=faraday
+    volumes:
+      - "db:/var/lib/postgresql/data:rw"
+    networks:
+      - faraday_network
+
+  redis:
+    image: redis:6.2-alpine
+    restart: always
+    container_name: faraday_redis
+    networks:
+      - faraday_network
+
+  app:
+    image: index.docker.io/faradaysec/faraday
+    restart: always
+    container_name: faraday_app
+    entrypoint: "/entrypoint.sh"
+    volumes:
+      - "$HOME/.faraday:/home/faraday/.faraday:rw"
+    environment:
+      - PGSQL_USER=postgres
+      - PGSQL_PASSWD=postgres
+      - PGSQL_HOST=db
+      - PGSQL_DBNAME=faraday
+      - REDIS_SERVER=redis
+    depends_on:
+      - db
+      - redis
+    networks:
+      - faraday_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.faraday_app.rule=Host(`${FARADAY_DOMAIN}`)"
+      - "traefik.http.routers.faraday_app.entrypoints=websecure"
+      - "traefik.http.routers.faraday_app.tls=true"
+      - "traefik.http.routers.faraday_app.tls.certresolver=myresolver"
+      - "traefik.http.services.faraday_app.loadbalancer.server.port=5985"
+
+volumes:
+  db:
+    driver: local
+  traefik-certificates:
+
+networks:
+  faraday_network:
+    driver: bridge
